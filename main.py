@@ -3,12 +3,18 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from skimage.measure import LineModelND, ransac
 
+import random
+
 np.random.seed(seed=1)
 
 # generate coordinates of line
 point = np.array([0, 0, 0], dtype='float')
 direction = np.array([1, 1, 1], dtype='float') / np.sqrt(3)
 xyz = point + 10 * np.arange(-100, 100)[..., np.newaxis] * direction
+
+for i, val in enumerate(xyz):
+    for j, val2 in enumerate(val):
+        xyz[i][j] = val2 * (1.0 + (random.random() * (1.2 - 1.0)))
 
 # add gaussian noise to coordinates
 noise = np.random.normal(size=xyz.shape)
@@ -18,7 +24,7 @@ xyz[::4] += 100 * noise[::4]
 
 # robustly fit line only using inlier data with RANSAC algorithm
 model_robust, inliers = ransac(xyz, LineModelND, min_samples=2,
-                               residual_threshold=100, max_trials=1000)
+                               residual_threshold=10, max_trials=10)
 outliers = inliers == False
 
 fig = plt.figure()
