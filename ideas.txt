@@ -1,0 +1,3 @@
+Remove Z-axis from data
+Take only some samples from around the basket
+If no fit could be found, expect there to be no board behind the basket
