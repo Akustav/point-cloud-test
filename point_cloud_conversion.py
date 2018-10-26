@@ -1,9 +1,6 @@
 import pyrealsense2 as rs
-
 import numpy as np
-
 import cv2
-
 import math
 
 from skimage.measure import LineModelND, ransac
@@ -59,9 +56,6 @@ try:
             #print "Failed to get vertexes for {} frames".format(count)
 
         count = 0
-        #aligned_depth_frame = frames.get_depth_frame()
-        #color_frame = frames.get_color_frame()
-
 
         # Validate that both frames are valid
 
@@ -85,18 +79,12 @@ try:
             x, y, w, h = cv2.boundingRect(c)
             cv2.rectangle(color_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            # points = pc.calculate(aligned_depth_frame)
-            # try:
-            #     vertex_array = np.asanyarray(points.get_vertices())
-            # except:
-            #     print "did not fetch frame"
-            #     print count
-            #     count = count + 1
-            #     continue
-
             vertex_map = []
 
             vertex_map = np.array(vertex_array).reshape(720, 1280)
+
+            # mask out basket
+            vertex_map[y:y + h, x:x+w] = 0
 
             min_x = clamp(x + w/2, 0, 1280)
             max_x = clamp(x + w*3/2, 0, 1280)
@@ -127,14 +115,11 @@ try:
             for vertex_x in range(0, crop_mat_size[0], 5):
                 for vertex_y in range(0, crop_mat_size[1], 5):
                     vertex = crop_vertex[vertex_x, vertex_y]
-
                     vert_x = vertex[1]
                     vert_y = vertex[2]
-
                     vert_sum = abs(vert_x) + abs(vert_y)
                     vert_dist = math.sqrt(vert_sum)
                     if max_dist > vert_dist > min_dist:
-                        #print vert_dist
                         planar_vertex_array.append([vert_x, vert_y])
 
             planar_vertex_array = np.array(planar_vertex_array)
@@ -152,12 +137,9 @@ try:
 
                     angle = np.arctan2(-vector[1], vector[0]) * 180 / 3.14
 
-                    #print "Angle: {}".format(angle)
 
                     line_x = np.array([0, 1])
                     line_y = model_robust.predict(line_x)
-
-                    #print line_y
 
                     print calculate_angle(line_y[:, 0][0], line_y[:, 1][0], line_y[:, 0][1], line_y[:, 1][1])
 
@@ -179,48 +161,5 @@ try:
 
         cv2.imshow('images', color_image)
         cv2.waitKey(1)
-
-    # Wait for the next set of frames from the camera
-    #frames = pipe.wait_for_frames()
-
-    # Fetch color and depth frames
-    #depth = frames.get_depth_frame()
-    #color = frames.get_color_frame()
-
-    # Tell pointcloud object to map to this color frame
-    #pc.map_to(color)
-
-    # Generate the pointcloud and texture mappings
-    #points = pc.calculate(depth)
-
-    #print dir(type(pc))
-
-    #print dir(type(points))
-
-    #data = np.asanyarray(points.get_data())
-
-    #print data.size
-
-    #as_points = np.asanyarray(points.as_points())
-
-    #vertex_array = np.asanyarray(points.get_vertices())
-
-    #vertex_map = []
-
-    #for x in range(0, 1280, 20):
-    #    for y in range(0, 720, 20):
-    #        vertex_map.append([vertex_array[x*y][0], vertex_array[x*y][1], vertex_array[x*y][2]])
-
-    #vertex_map = np.array(vertex_map)
-
-    # from matplotlib import pyplot as plt
-    # from mpl_toolkits.mplot3d import Axes3D
-    #
-    # fig = plt.figure()
-    # ax = fig.add_subplot(111, projection='3d')
-    # ax.scatter(vertex_map[:, 0], vertex_map[:, 1], vertex_map[:, 2], c='b', marker='o', label='data')
-    # plt.show()
-
-
 finally:
     pipe.stop()
