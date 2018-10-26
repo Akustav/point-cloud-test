@@ -53,8 +53,7 @@ try:
 
         dX, dY = depth_image.shape
 
-        #fig = plt.figure()
-        #ax = fig.add_subplot(111, projection='3d')
+
 
         x_arr = []
         y_arr = []
@@ -90,6 +89,9 @@ try:
         arctan = np.arctan(params[1][2] / params[1][1]) * 180/3.14
 
         print "angle = " + str(arctan)
+
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111, projection='3d')
 
         #outliers = inliers == False
 
