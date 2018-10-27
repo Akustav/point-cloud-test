@@ -12,8 +12,12 @@ points = rs.points()
 pipe = rs.pipeline()
 
 config = rs.config()
-config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
-config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
+
+width = 1280
+height = 720
+
+config.enable_stream(rs.stream.depth, width, height, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, 30)
 
 
 profile = pipe.start(config)
@@ -37,6 +41,7 @@ def calculate_angle(x0, y0, x1, y1):
     rads = atan2(-dy, dx)
     return degrees(rads)
 
+
 try:
     while True:
         frames = pipe.wait_for_frames()
@@ -48,12 +53,20 @@ try:
         # Get aligned frames
         aligned_depth_frame = aligned_frames.get_depth_frame()  # aligned_depth_frame is a 640x480 depth image
         color_frame = aligned_frames.get_color_frame()
+        import time
+        #time.sleep(0.05)
 
         try:
             vertex_array = np.asanyarray(pc.calculate(aligned_depth_frame).get_vertices())
-        except:
+        except Exception as e:
             count += 1
-            #print "Failed to get vertexes for {} frames".format(count)
+            print e
+            print "Failed to get vertexes for {} frames".format(count)
+
+            align_to = rs.stream.color
+            align = rs.align(align_to)
+            frames = pipe.wait_for_frames()
+            continue
 
         count = 0
 
@@ -68,8 +81,8 @@ try:
         pc.map_to(color_frame)
 
         # fetch rectangle for goal
-        lower = (100, 40, 0)
-        upper = (255, 90, 40)
+        lower = (120, 50, 0)
+        upper = (255, 105, 10)
         mask = cv2.inRange(color_image, lower, upper)
 
         im2, cnts, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -81,15 +94,15 @@ try:
 
             vertex_map = []
 
-            vertex_map = np.array(vertex_array).reshape(720, 1280)
+            vertex_map = np.array(vertex_array).reshape(height, width)
 
             # mask out basket
-            vertex_map[y:y + h, x:x+w] = 0
+            vertex_map[y:y + h, x:x+w] = (0, 0, 0)
 
-            min_x = clamp(x + w/2, 0, 1280)
-            max_x = clamp(x + w*3/2, 0, 1280)
-            min_y = clamp(y - h * 3 / 2, 0, 720)
-            max_y = clamp(y + h * 5 / 2, 0, 720)
+            min_x = clamp(x + w*1/2, 0, width)
+            max_x = clamp(x + w*5/3, 0, width)
+            min_y = clamp(y - h * 3 / 2, 0, height)
+            max_y = clamp(y + h * 5 / 2, 0, height)
 
             cv2.rectangle(color_image, (min_x, min_y), (max_x, max_y), (0, 255, 255), 2)
 
@@ -101,23 +114,26 @@ try:
                 crop_test = cv2.applyColorMap(cv2.convertScaleAbs(crop_test, alpha=0.03), cv2.COLORMAP_JET)
                 cv2.imshow('crop_test', crop_test)
 
-            planar_vertex_array = []
-
             dist = np.average(depth_image[y:y + w, x:x + h]) * depth_scale
 
-            max_dist = dist + 0.4
-            min_dist = dist - 0.4
-
-            #print "Dist to goal: {}".format(dist)
+            max_dist = dist + 0.1
+            min_dist = dist - 0.3
 
             crop_mat_size = crop_vertex.shape
 
-            for vertex_x in range(0, crop_mat_size[0], 5):
-                for vertex_y in range(0, crop_mat_size[1], 5):
+            planar_vertex_array = []
+
+            dist = clamp(dist, 0.1, 6)
+
+            distance_sample_rate_x = int(math.ceil(3 / dist))
+            distance_sample_rate_y = int(math.ceil(8 / dist))
+
+            for vertex_x in range(0, crop_mat_size[0], distance_sample_rate_x):
+                for vertex_y in range(0, crop_mat_size[1], distance_sample_rate_y):
                     vertex = crop_vertex[vertex_x, vertex_y]
                     vert_x = vertex[1]
                     vert_y = vertex[2]
-                    vert_sum = abs(vert_x) + abs(vert_y)
+                    vert_sum = abs(vert_x**2) + abs(vert_y**2)
                     vert_dist = math.sqrt(vert_sum)
                     if max_dist > vert_dist > min_dist:
                         planar_vertex_array.append([vert_x, vert_y])
@@ -131,29 +147,30 @@ try:
             try:
                 if planar_vertex_array.size > 0:
                     deviation = 0.1
-                    model_robust, inliers = ransac(planar_vertex_array, LineModelND, min_samples=2, residual_threshold=deviation, max_trials=10)
+                    model_robust, inliers = ransac(planar_vertex_array, LineModelND, min_samples=2, residual_threshold=deviation, max_trials=5)
 
                     vector = model_robust.params[1]
 
                     angle = np.arctan2(-vector[1], vector[0]) * 180 / 3.14
 
+                    #print calculate_angle(line_y[:, 0][0], line_y[:, 1][0], line_y[:, 0][1], line_y[:, 1][1])
 
-                    line_x = np.array([0, 1])
-                    line_y = model_robust.predict(line_x)
-
-                    print calculate_angle(line_y[:, 0][0], line_y[:, 1][0], line_y[:, 0][1], line_y[:, 1][1])
-
-                    if True:
+                    if False:
                         import matplotlib.pyplot as plt
 
-                        plt.scatter(planar_vertex_array[:, 0], planar_vertex_array[:, 1], s=2, c="red", alpha=0.5)
+                        outliers = inliers == False
+
+                        plt.scatter(planar_vertex_array[outliers][:, 0], planar_vertex_array[outliers][:, 1], s=2, c="red", alpha=0.5)
+                        plt.scatter(planar_vertex_array[inliers][:, 0], planar_vertex_array[inliers][:, 1], s=2, c="blue", alpha=0.5)
                         plt.show()
                 else:
-                    angle = 0
+                    angle = -999
 
             except Exception as e:
                 print "fail"
                 print e
+
+            print "Distane: {}, Angle: {}".format(dist, angle)
 
             #print "angle: ".format(angle)
 
