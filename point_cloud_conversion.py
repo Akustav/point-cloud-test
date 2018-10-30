@@ -2,6 +2,8 @@ import pyrealsense2 as rs
 import numpy as np
 import cv2
 import math
+import socket as soc
+import json
 
 from skimage.measure import LineModelND, ransac
 
@@ -30,19 +32,55 @@ align_to = rs.stream.color
 align = rs.align(align_to)
 count = 0
 
+
 def clamp(value, bottom, top):
     return min(max(value, bottom), top)
 
-def calculate_angle(x0, y0, x1, y1):
-    print "points: ({} : {}) ({} : {})".format(x0,y0,x1,y1)
-    from math import atan2, degrees, pi
-    dx = x1 - x0
-    dy = y1 - y0
-    rads = atan2(-dy, dx)
-    return degrees(rads)
+
+hub_port = 8091
+hub_addr = "127.0.0.1"
+server = (hub_addr, 8096)
+socket = soc.socket(soc.AF_INET, soc.SOCK_DGRAM)
+
+topic = "goal_distance"
+
+
+def open_udp_connection():
+    print "init udp"
+    socket.bind(server)
+    #socket.listen()a
+    udp_send({"type": "subscribe", "topics": [topic]})
+
+
+def close_udp_connection():
+    udp_send({"type": "unsubscribe", "topics": [topic]})
+    socket.close()
+
+
+def send_data_to_hub(data):
+    message = {
+        "type": "message",
+        "topic": topic,
+        "data": data
+    }
+    udp_send(message)
+
+
+def udp_send(string):
+    #print "sending message: {}".format(string)
+    socket.sendto(json.dumps(string), (hub_addr, hub_port))
+
+
+def get_data():
+    data, address = socket.recvfrom(4096)
+    if data:
+        json_data = json.loads(data)
+        if json_data["topic"] == "goal_distance_close":
+            raise Exception('Exiting')
 
 
 try:
+    #open_udp_connection()
     while True:
         frames = pipe.wait_for_frames()
         # frames.get_depth_frame() is a 640x360 depth image
@@ -53,15 +91,13 @@ try:
         # Get aligned frames
         aligned_depth_frame = aligned_frames.get_depth_frame()  # aligned_depth_frame is a 640x480 depth image
         color_frame = aligned_frames.get_color_frame()
-        import time
-        #time.sleep(0.05)
 
         try:
             vertex_array = np.asanyarray(pc.calculate(aligned_depth_frame).get_vertices())
         except Exception as e:
             count += 1
             print e
-            print "Failed to get vertexes for {} frames".format(count)
+            #print "Failed to get vertexes for {} frames".format(count)
 
             align_to = rs.stream.color
             align = rs.align(align_to)
@@ -82,13 +118,21 @@ try:
 
         # fetch rectangle for goal
         lower = (120, 50, 0)
-        upper = (255, 105, 10)
+        upper = (255, 90, 10)
         mask = cv2.inRange(color_image, lower, upper)
 
         im2, cnts, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
         if len(cnts) > 0:
             c = max(cnts, key=cv2.contourArea)
+
+            area = cv2.contourArea(c)
+
+            min_area = 100
+
+            if area < min_area:
+                continue
+
             x, y, w, h = cv2.boundingRect(c)
             cv2.rectangle(color_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
@@ -110,9 +154,9 @@ try:
 
             crop_test = depth_image[min_y: max_y, min_x: max_x]
 
-            if crop_test.size > 0:
-                crop_test = cv2.applyColorMap(cv2.convertScaleAbs(crop_test, alpha=0.03), cv2.COLORMAP_JET)
-                cv2.imshow('crop_test', crop_test)
+            #if crop_test.size > 0 and False:
+            #    crop_test = cv2.applyColorMap(cv2.convertScaleAbs(crop_test, alpha=0.03), cv2.COLORMAP_JET)
+            #    cv2.imshow('crop_test', crop_test)
 
             dist = np.average(depth_image[y:y + w, x:x + h]) * depth_scale
 
@@ -125,15 +169,15 @@ try:
 
             dist = clamp(dist, 0.1, 6)
 
-            distance_sample_rate_x = int(math.ceil(3 / dist))
-            distance_sample_rate_y = int(math.ceil(8 / dist))
+            distance_sample_rate_x = int(math.ceil(6 / dist))
+            distance_sample_rate_y = int(math.ceil(12 / dist))
 
             for vertex_x in range(0, crop_mat_size[0], distance_sample_rate_x):
                 for vertex_y in range(0, crop_mat_size[1], distance_sample_rate_y):
                     vertex = crop_vertex[vertex_x, vertex_y]
                     vert_x = vertex[1]
                     vert_y = vertex[2]
-                    vert_sum = abs(vert_x**2) + abs(vert_y**2)
+                    vert_sum = vert_x**2 + vert_y**2
                     vert_dist = math.sqrt(vert_sum)
                     if max_dist > vert_dist > min_dist:
                         planar_vertex_array.append([vert_x, vert_y])
@@ -151,26 +195,29 @@ try:
 
                     vector = model_robust.params[1]
 
-                    angle = np.arctan2(-vector[1], vector[0]) * 180 / 3.14
+                    angle = np.arctan2(-vector[1], vector[0]) * 180 / math.pi
 
                     #print calculate_angle(line_y[:, 0][0], line_y[:, 1][0], line_y[:, 0][1], line_y[:, 1][1])
 
-                    if False:
-                        import matplotlib.pyplot as plt
+                    #if False:
+                    #    import matplotlib.pyplot as plt
 
-                        outliers = inliers == False
+                    #    outliers = inliers == False
 
-                        plt.scatter(planar_vertex_array[outliers][:, 0], planar_vertex_array[outliers][:, 1], s=2, c="red", alpha=0.5)
-                        plt.scatter(planar_vertex_array[inliers][:, 0], planar_vertex_array[inliers][:, 1], s=2, c="blue", alpha=0.5)
-                        plt.show()
+                    #    plt.scatter(planar_vertex_array[outliers][:, 0], planar_vertex_array[outliers][:, 1], s=2, c="red", alpha=0.5)
+                    #    plt.scatter(planar_vertex_array[inliers][:, 0], planar_vertex_array[inliers][:, 1], s=2, c="blue", alpha=0.5)
+                    #    plt.show()
                 else:
-                    angle = -999
+                    angle = None
 
             except Exception as e:
-                print "fail"
                 print e
 
             print "Distane: {}, Angle: {}".format(dist, angle)
+
+            #send_data_to_hub({"distance": dist, "angle": angle})
+
+            #get_data()
 
             #print "angle: ".format(angle)
 
@@ -179,4 +226,5 @@ try:
         cv2.imshow('images', color_image)
         cv2.waitKey(1)
 finally:
+    close_udp_connection()
     pipe.stop()

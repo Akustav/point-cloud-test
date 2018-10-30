@@ -1,55 +1,48 @@
+import cv2
 import numpy as np
-from matplotlib import pyplot as plt
+import pyrealsense2 as rs
 
-from sklearn import linear_model, datasets
+config = rs.config()
+config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 60)
 
+pipeline = rs.pipeline()
 
-n_samples = 1000
-n_outliers = 50
+profile = pipeline.start(config)
 
+align_to = rs.stream.color
+align = rs.align(align_to)
 
-X, y, coef = datasets.make_regression(n_samples=n_samples, n_features=1,
-                                      n_informative=1, noise=10,
-                                      coef=True, random_state=0)
+try:
+    while True:
+        frames = pipeline.wait_for_frames()
+        # frames.get_depth_frame() is a 640x360 depth image
 
-# Add outlier data
-np.random.seed(0)
-X[:n_outliers] = 3 + 0.5 * np.random.normal(size=(n_outliers, 1))
-y[:n_outliers] = -3 + 10 * np.random.normal(size=n_outliers)
+        # Align the depth frame to color frame
+        aligned_frames = align.process(frames)
 
-# Fit line using all data
-lr = linear_model.LinearRegression()
-lr.fit(X, y)
+        # Get aligned frames
+        aligned_depth_frame = aligned_frames.get_depth_frame()  # aligned_depth_frame is a 640x480 depth image
+        color_frame = aligned_frames.get_color_frame()
 
-# Robustly fit linear model with RANSAC algorithm
-ransac = linear_model.RANSACRegressor()
-ransac.fit(X, y)
-inlier_mask = ransac.inlier_mask_
-outlier_mask = np.logical_not(inlier_mask)
+        color_image = np.asanyarray(color_frame.get_data())
 
-# Predict data of estimated models
-line_X = np.arange(X.min(), X.max())[:, np.newaxis]
-line_y = lr.predict(line_X)
-line_y_ransac = ransac.predict(line_X)
+        arr = np.copy(color_image)
 
-print X
+        #lower = (120, 50, 0)
+        #upper = (255, 90, 10)
 
-print line_X
-print line_y_ransac
+        R = [(0, 100), (0, 100), (0, 255)]
+        red_range = np.logical_and(R[0][0] < arr[:, :, 0], arr[:, :, 0] < R[0][1])
+        green_range = np.logical_and(R[1][0] < arr[:, :, 0], arr[:, :, 0] < R[1][1])
+        blue_range = np.logical_and(R[2][0] < arr[:, :, 0], arr[:, :, 0] < R[2][1])
+        valid_range = np.logical_and(red_range, green_range, blue_range)
 
-# Compare estimated coefficients
-print("Estimated coefficients (true, linear regression, RANSAC):")
-print(coef, lr.coef_, ransac.estimator_.coef_)
+        arr[valid_range] = 200
+        arr[np.logical_not(valid_range)] = 0
 
-lw = 2
-plt.scatter(X[inlier_mask], y[inlier_mask], color='yellowgreen', marker='.',
-            label='Inliers')
-plt.scatter(X[outlier_mask], y[outlier_mask], color='gold', marker='.',
-            label='Outliers')
-plt.plot(line_X, line_y, color='navy', linewidth=lw, label='Linear regressor')
-plt.plot(line_X, line_y_ransac, color='cornflowerblue', linewidth=lw,
-         label='RANSAC regressor')
-plt.legend(loc='lower right')
-plt.xlabel("Input")
-plt.ylabel("Response")
-plt.show()
+        cv2.imshow('images', arr)
+        cv2.imshow('images2', color_image)
+        cv2.waitKey(1)
+finally:
+    pipeline.stop()
